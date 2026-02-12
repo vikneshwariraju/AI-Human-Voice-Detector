@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI vs Human Voice Detection</title>
+
+<style>
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg,#A78BFA,violet);
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.card {
+    background: rgba(255,255,255,0.15);
+    backdrop-filter: blur(10px);
+    padding: 30px;
+    border-radius: 20px;
+    text-align: center;
+    color: white;
+    width: 350px;
+}
+
+button {
+    padding: 12px 20px;
+    border: none;
+    border-radius: 10px;
+    margin: 10px;
+    cursor: pointer;
+    font-size: 16px;
+}
+.record {
+    background: linear-gradient(135deg, #EF4444, #DC2626);
+    border: none;
+    color: white;
+    padding: 12px 22px;
+    border-radius: 50px;
+    font-size: 15px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.record:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 15px rgba(239,68,68,0.4);
+}
+
+.stop {
+    background: linear-gradient(135deg, #22C55E, #16A34A);
+    border: none;
+    color: white;
+    padding: 12px 22px;
+    border-radius: 50px;
+    font-size: 15px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.stop:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 15px rgba(34,197,94,0.4);
+}
+
+
+#result {
+    margin-top: 20px;
+    font-size: 18px;
+    font-weight: bold;
+}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+    <h2>Voice Detection</h2>
+    <p>Check whether voice is Human or AI</p>
+
+    <button class="record" onclick="startRecording()">Start Recording</button>
+    <button class="stop" onclick="stopRecording()">Stop & Predict</button>
+
+    <p id="result"></p>
+</div>
+
+<script>
+let audioContext;
+let processor;
+let input;
+let globalStream;
+let audioData = [];
+
+async function startRecording() {
+
+    globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    audioContext = new AudioContext({ sampleRate: 22050 });
+    input = audioContext.createMediaStreamSource(globalStream);
+
+    processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+    audioData = [];
+
+    processor.onaudioprocess = e => {
+        audioData.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    };
+
+    input.connect(processor);
+    processor.connect(audioContext.destination);
+
+    document.getElementById("result").innerText = "Recording...";
+}
+
+function stopRecording() {
+
+    processor.disconnect();
+    input.disconnect();
+    globalStream.getTracks().forEach(track => track.stop());
+
+    const wavBlob = encodeWAV(audioData, 22050);
+
+    sendAudio(wavBlob);
+}
+
+function encodeWAV(samples, sampleRate) {
+
+    let bufferLength = samples.reduce((acc, cur) => acc + cur.length, 0);
+    let buffer = new ArrayBuffer(44 + bufferLength * 2);
+    let view = new DataView(buffer);
+
+    function writeString(view, offset, string) {
+        for (let i = 0; i < string.length; i++)
+            view.setUint8(offset + i, string.charCodeAt(i));
+    }
+
+    writeString(view, 0, "RIFF");
+    view.setUint32(4, 36 + bufferLength * 2, true);
+    writeString(view, 8, "WAVE");
+    writeString(view, 12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(view, 36, "data");
+    view.setUint32(40, bufferLength * 2, true);
+
+    let offset = 44;
+    samples.forEach(sample => {
+        for (let i = 0; i < sample.length; i++, offset += 2) {
+            let s = Math.max(-1, Math.min(1, sample[i]));
+            view.setInt16(offset, s * 0x7fff, true);
+        }
+    });
+
+    return new Blob([view], { type: "audio/wav" });
+}
+
+async function sendAudio(blob) {
+
+    document.getElementById("result").innerText = "Processing...";
+
+    const formData = new FormData();
+    formData.append("file", blob, "record.wav");
+
+    const response = await fetch("/predict", {
+        method: "POST",
+        body: formData
+    });
+
+    const data = await response.json();
+
+    document.getElementById("result").innerText =
+        "Result: " + data.prediction;
+}
+</script>
+
+</body>
+</html>
